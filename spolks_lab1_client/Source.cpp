@@ -107,8 +107,8 @@ int Send(string str, int socket) {
 void PrintLastError() {
 #if  defined _WIN32 || defined _WIN64
     wchar_t buf[256];
-    FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM, NULL, GetLastError(),
-                   MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), buf, 256, NULL)
+	FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM, NULL, GetLastError(),
+		MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), buf, 256, NULL);
     wcout << buf;
 #elif defined __linux__
     int error = errno;
