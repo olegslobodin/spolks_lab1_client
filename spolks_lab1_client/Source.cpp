@@ -1,10 +1,12 @@
 #include <stdlib.h>
-#include"Header.h"
+#include "Header.h"
 
 const int BUFFER_SIZE = 1000;
 const int FILE_BUFFER_SIZE = 10 * 1024 * 1024;
 const char *END_OF_FILE = "File sent 8bb20328-3a19-4db8-b138-073a48f57f4a";
 const char *FILE_SEND_ERROR = "File send error 8bb20328-3a19-4db8-b138-073a48f57f4a";
+const char *FILE_NOT_FOUND = "File is not found 8bb20328-3a19-4db8-b138-073a48f57f4a";
+const char *DEFAULT_FILE_PATH_WINDOWS = "../debug/files/";
 
 int main() {
 	int socket;
@@ -81,6 +83,20 @@ void Work(int *socket) {
 				cout << "Please specify a file name";
 			}
 		}
+		else if (cmd.find("receive") == 0) {
+			vector<string> words = split(cmd, ' ');
+			if (words.size() > 2) {
+				ReceiveFile(*socket, words[1], words[2]);
+				continue;
+			}
+			else if (words.size() > 1) {
+				ReceiveFile(*socket, words[1], DEFAULT_FILE_PATH_WINDOWS);
+				continue;
+			}
+			else {
+				cout << "Please specify a file name";
+			}
+		}
 		else if (Send(cmd + "\n", *socket) == SOCKET_ERROR)
 			continue;
 		string answer = ReceiveAnswer(*socket, buffer);
@@ -114,7 +130,7 @@ void SendFile(int socket, string path)
 		string temp = path;
 		replace(path.begin(), path.end(), '\\', '/');
 		string fileName = split(temp, '/').back();
-		Send("send " + fileName +"\n", socket);
+		Send("send " + fileName + "\n", socket);
 	}
 	else {
 		cout << "Can't open the file " << path << ". Error #" << errno << endl;
@@ -154,6 +170,69 @@ void SendFile(int socket, string path)
 	free(cmdBuffer);
 	free(fileBuffer);
 	cout << endl << answer;
+}
+
+void ReceiveFile(int socket, string fileName, string savePath) {
+	ofstream file;
+	file.open(savePath + fileName, ios::binary);
+
+	if (file.is_open()) {
+		Send("receive " + fileName + "\n", socket);
+	}
+	else {
+		cout << "Can't open the file for writing" << savePath << ". Error #" << errno << endl;
+		return;
+	}
+
+	char *fileBuffer = (char*)calloc(FILE_BUFFER_SIZE, 1);
+	unsigned long long totalBytesReceived = 0;
+	bool sendingComplete = false;
+
+	while (!sendingComplete)
+	{
+		unsigned long long recievedBytesCount = recv(socket, fileBuffer, FILE_BUFFER_SIZE, 0);
+		if (Contains(fileBuffer, recievedBytesCount, END_OF_FILE)) {
+			sendingComplete = true;
+			recievedBytesCount -= strlen(END_OF_FILE);
+		}
+		if (Contains(fileBuffer, recievedBytesCount, FILE_SEND_ERROR)) {
+			cout << "File sending was aborted\n";
+			break;
+		}
+		if (Contains(fileBuffer, recievedBytesCount, FILE_NOT_FOUND)) {
+			cout << "File is not found\n";
+			break;
+		}
+		else if (recievedBytesCount == SOCKET_ERROR) {
+			cout << "Can't receive file on server side. Error #" + errno + '\n';
+			PrintLastError();
+			break;
+		}
+		file.write(fileBuffer, recievedBytesCount);
+		totalBytesReceived += recievedBytesCount;
+		cout << "\r" << totalBytesReceived << " bytes received";
+		if (sendingComplete)
+			cout << endl << "Receiving complete" << endl;
+	}
+	free(fileBuffer);
+	file.close();
+}
+
+bool Contains(char *buffer, int bufferLength, const char *substring)
+{
+	int bufferPos = 0;
+	while (bufferPos < bufferLength)
+	{
+		int subStringPos = 0;
+		while (bufferPos < bufferLength && buffer[bufferPos] == substring[subStringPos])
+		{
+			bufferPos++;
+			if (++subStringPos == strlen(substring))
+				return true;
+		}
+		bufferPos++;
+	}
+	return false;
 }
 
 int Send(string str, int socket) {

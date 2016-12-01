@@ -46,6 +46,10 @@ int Connect(int *socket, string ip);
 
 void SendFile(int socket, string path);
 
+void ReceiveFile(int socket, string fileName, string savePath);
+
+bool Contains(char *buffer, int bufferLength, const char *substring);
+
 int Send(string str, int socket);
 
 void PrintLastError();
