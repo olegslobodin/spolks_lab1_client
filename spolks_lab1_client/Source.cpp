@@ -106,15 +106,18 @@ int Connect(int *socket, string ip) {
 	return connect(*socket, (struct sockaddr *) &clientSocketParams, sizeof(clientSocketParams));
 }
 
-void SendFile(int socket, string fileName)
+void SendFile(int socket, string path)
 {
 	ifstream file;
-	file.open("D:\\Projects\\C++, C#\\spolks_lab1_client\\Debug\\" + fileName, ios::binary);
+	file.open(path, ios::binary);
 	if (file.is_open()) {
-		Send("send " + fileName + "\n", socket);
+		string temp = path;
+		replace(path.begin(), path.end(), '\\', '/');
+		string fileName = split(temp, '/').back();
+		Send("send " + fileName +"\n", socket);
 	}
 	else {
-		cout << "Can't open the file " << "D:\\Projects\\C++, C#\\spolks_lab1_client\\Debug\\" + fileName << ". Error #" << errno << endl;
+		cout << "Can't open the file " << path << ". Error #" << errno << endl;
 		return;
 	}
 

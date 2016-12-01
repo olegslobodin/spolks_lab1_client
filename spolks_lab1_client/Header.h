@@ -6,6 +6,7 @@
 #include <fstream>
 #include <string>
 #include <string.h>
+#include <algorithm>
 #include <sstream>
 #include <vector>
 
@@ -43,7 +44,7 @@ void Work(int *socket);
 
 int Connect(int *socket, string ip);
 
-void SendFile(int socket, string fileName);
+void SendFile(int socket, string path);
 
 int Send(string str, int socket);
 
