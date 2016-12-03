@@ -6,7 +6,11 @@ const int FILE_BUFFER_SIZE = 10 * 1024 * 1024;
 const char *END_OF_FILE = "File sent 8bb20328-3a19-4db8-b138-073a48f57f4a";
 const char *FILE_SEND_ERROR = "File send error 8bb20328-3a19-4db8-b138-073a48f57f4a";
 const char *FILE_NOT_FOUND = "File is not found 8bb20328-3a19-4db8-b138-073a48f57f4a";
-const char *DEFAULT_FILE_PATH_WINDOWS = "../debug/files/";
+#if  defined _WIN32 || defined _WIN64
+const char *DEFAULT_PATH = "../debug/files/";
+#elif defined __linux__
+const char *DEFAULT_PATH = "./files/";
+#endif
 
 int main() {
 	int socket;
@@ -90,7 +94,7 @@ void Work(int *socket) {
 				continue;
 			}
 			else if (words.size() > 1) {
-				ReceiveFile(*socket, words[1], DEFAULT_FILE_PATH_WINDOWS);
+				ReceiveFile(*socket, words[1], DEFAULT_PATH);
 				continue;
 			}
 			else {
