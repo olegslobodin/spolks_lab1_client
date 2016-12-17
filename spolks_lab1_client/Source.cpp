@@ -7,6 +7,7 @@ const char *END_OF_FILE = "File sent 8bb20328-3a19-4db8-b138-073a48f57f4a";
 const char *FILE_SEND_ERROR = "File send error 8bb20328-3a19-4db8-b138-073a48f57f4a";
 const char *FILE_NOT_FOUND = "File is not found 8bb20328-3a19-4db8-b138-073a48f57f4a";
 const char *DEFAULT_FILE_PATH_WINDOWS = "../debug/files/";
+const int MAX_FLAG_STRING_LENGTH = 60;
 
 int main() {
 	int socket;
@@ -97,10 +98,10 @@ void Work(int *socket) {
 				cout << "Please specify a file name";
 			}
 		}
-		else if (Send(cmd + "\n", *socket) == SOCKET_ERROR)
+		else if (SendString(cmd + "\n", *socket) == SOCKET_ERROR)
 			continue;
 		string answer = ReceiveAnswer(*socket, buffer);
-		cout << answer << endl;
+		cout << answer;
 	}
 
 	free(buffer);
@@ -127,20 +128,25 @@ void SendFile(int socket, string path)
 	ifstream file;
 	file.open(path, ios::binary);
 	if (file.is_open()) {
-		string temp = path;
-		replace(path.begin(), path.end(), '\\', '/');
-		string fileName = split(temp, '/').back();
-		Send("send " + fileName + "\n", socket);
+		string fileName = GetFileNameFromPath(path);
+		SendString("send " + fileName + "\n", socket);
 	}
 	else {
-		cout << "Can't open the file " << path << ". Error #" << errno << endl;
-		return;
+		file.open(DEFAULT_FILE_PATH_WINDOWS + path, ios::binary);
+		if (file.is_open()) {
+			string fileName = GetFileNameFromPath(DEFAULT_FILE_PATH_WINDOWS + path);
+			SendString("send " + fileName + "\n", socket);
+		}
+		else {
+			cout << "Can't open the file " << path << ". Error #" << errno << endl;
+			return;
+		}
 	}
 
 	char *cmdBuffer = (char*)calloc(1000, 1);
 	string answer = ReceiveAnswer(socket, cmdBuffer);
 	if (answer.find("ready") == string::npos) {
-		cout << answer << endl;
+		cout << answer;
 		free(cmdBuffer);
 		return;
 	}
@@ -164,7 +170,7 @@ void SendFile(int socket, string path)
 	} while (length > 0);
 	file.close();
 
-	Send(END_OF_FILE, socket);
+	SendString(END_OF_FILE, socket);
 
 	answer = ReceiveAnswer(socket, cmdBuffer);
 	free(cmdBuffer);
@@ -177,29 +183,35 @@ void ReceiveFile(int socket, string fileName, string savePath) {
 	file.open(savePath + fileName, ios::binary);
 
 	if (file.is_open()) {
-		Send("receive " + fileName + "\n", socket);
+		SendString("receive " + fileName + "\n", socket);
 	}
 	else {
 		cout << "Can't open the file for writing" << savePath << ". Error #" << errno << endl;
 		return;
 	}
 
-	char *fileBuffer = (char*)calloc(FILE_BUFFER_SIZE, 1);
+	char *fileBuffer = new char[FILE_BUFFER_SIZE + 100];
+	char *tempFileBuffer = new char[FILE_BUFFER_SIZE + 100];
+	char *currentPos = fileBuffer;
 	unsigned long long totalBytesReceived = 0;
 	bool sendingComplete = false;
 
+
 	while (!sendingComplete)
 	{
-		unsigned long long recievedBytesCount = recv(socket, fileBuffer, FILE_BUFFER_SIZE, 0);
-		if (Contains(fileBuffer, recievedBytesCount, END_OF_FILE)) {
+		unsigned long long recievedBytesCount = recv(socket, tempFileBuffer, FILE_BUFFER_SIZE, 0);
+		MyStrcpy(currentPos, tempFileBuffer, recievedBytesCount);
+		currentPos += recievedBytesCount;
+		if (Contains(fileBuffer, FILE_BUFFER_SIZE, END_OF_FILE)) {
 			sendingComplete = true;
 			recievedBytesCount -= strlen(END_OF_FILE);
+			currentPos = fileBuffer + Pos(fileBuffer, FILE_BUFFER_SIZE, END_OF_FILE);
 		}
-		if (Contains(fileBuffer, recievedBytesCount, FILE_SEND_ERROR)) {
+		if (Contains(fileBuffer, FILE_BUFFER_SIZE, FILE_SEND_ERROR)) {
 			cout << "File sending was aborted\n";
 			break;
 		}
-		if (Contains(fileBuffer, recievedBytesCount, FILE_NOT_FOUND)) {
+		if (Contains(fileBuffer, FILE_BUFFER_SIZE, FILE_NOT_FOUND)) {
 			cout << "File is not found\n";
 			break;
 		}
@@ -208,34 +220,53 @@ void ReceiveFile(int socket, string fileName, string savePath) {
 			PrintLastError();
 			break;
 		}
-		file.write(fileBuffer, recievedBytesCount);
+		if (sendingComplete)
+		{
+			file.write(fileBuffer, currentPos - fileBuffer);
+		}
+		else
+			//buffer should store last ~ 60 bytes to find flags such as EOF
+			if (currentPos - fileBuffer >= MAX_FLAG_STRING_LENGTH) {
+				int bytesToWriteCount = currentPos - fileBuffer - MAX_FLAG_STRING_LENGTH;
+				file.write(fileBuffer, bytesToWriteCount);
+				for (int i = 0; i < MAX_FLAG_STRING_LENGTH; i++)
+					fileBuffer[i] = currentPos[i - MAX_FLAG_STRING_LENGTH];
+				currentPos = fileBuffer + MAX_FLAG_STRING_LENGTH;
+			}
 		totalBytesReceived += recievedBytesCount;
 		cout << "\r" << totalBytesReceived << " bytes received";
 		if (sendingComplete)
 			cout << endl << "Receiving complete" << endl;
 	}
-	free(fileBuffer);
+	delete fileBuffer;
+	delete tempFileBuffer;
 	file.close();
 }
 
 bool Contains(char *buffer, int bufferLength, const char *substring)
 {
+	return Pos(buffer, bufferLength, substring) > -1;
+}
+
+int Pos(char *buffer, int bufferLength, const char *substring)
+{
 	int bufferPos = 0;
 	while (bufferPos < bufferLength)
 	{
 		int subStringPos = 0;
-		while (bufferPos < bufferLength && buffer[bufferPos] == substring[subStringPos])
+		int tempBufferPos = bufferPos;
+		while (bufferPos < bufferLength && buffer[tempBufferPos] == substring[subStringPos])
 		{
-			bufferPos++;
+			tempBufferPos++;
 			if (++subStringPos == strlen(substring))
-				return true;
+				return bufferPos;
 		}
 		bufferPos++;
 	}
-	return false;
+	return -1;
 }
 
-int Send(string str, int socket) {
+int SendString(string str, int socket) {
 	int bufSize = str.length();
 	char *buf = (char *)calloc(bufSize + 1, 1);
 	strcpy(buf, str.c_str());
@@ -260,22 +291,24 @@ void PrintLastError() {
 }
 
 string ReceiveAnswer(int socket, char *buffer) {
-	//find position of line ending
 	char *currentPos = strchr(buffer, '\0');
-	if (currentPos == NULL)
-		currentPos = buffer;
 
-	int bytesRecieved = recv(socket, currentPos, BUFFER_SIZE - (currentPos - buffer), 0);
-	if (bytesRecieved == SOCKET_ERROR) {
-		buffer[0] = '\0';
-		PrintLastError();
-		return "";
-	}
-	currentPos += bytesRecieved;
+	do {
+		//find position of line ending
+		if (currentPos == NULL)
+			currentPos = buffer;
+
+		int bytesRecieved = recv(socket, currentPos, BUFFER_SIZE - (currentPos - buffer), 0);
+		if (bytesRecieved == SOCKET_ERROR) {
+			buffer[0] = '\0';
+			PrintLastError();
+			return "";
+		}
+		currentPos += bytesRecieved;
+	} while (strchr(buffer, '\n') == NULL);
 	*currentPos = '\0';
-
-	int responseLength = currentPos - buffer;
 	string result;
+	int responseLength = currentPos - buffer;
 	result.assign(buffer, responseLength);
 	for (int i = 0; i < BUFFER_SIZE - responseLength + 1; i++)
 		buffer[i] = buffer[i + responseLength + 1];
@@ -297,4 +330,16 @@ vector<string> split(const string &s, char delim) {
 	vector<string> elems;
 	split(s, delim, elems);
 	return elems;
+}
+
+string GetFileNameFromPath(string path) {
+	string temp = path;
+	replace(path.begin(), path.end(), '\\', '/');
+	string fileName = split(temp, '/').back();
+	return fileName;
+}
+
+void MyStrcpy(char* dest, char* source, int length) {
+	for (int i = 0; i < length; i++)
+		dest[i] = source[i];
 }

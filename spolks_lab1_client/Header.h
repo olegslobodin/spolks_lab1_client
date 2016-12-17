@@ -50,7 +50,9 @@ void ReceiveFile(int socket, string fileName, string savePath);
 
 bool Contains(char *buffer, int bufferLength, const char *substring);
 
-int Send(string str, int socket);
+int Pos(char *buffer, int bufferLength, const char *substring);
+
+int SendString(string str, int socket);
 
 void PrintLastError();
 
@@ -59,3 +61,7 @@ string ReceiveAnswer(int socket, char *buffer);
 void split(const string &s, char delim, vector<string> &elems);
 
 vector<string> split(const string &s, char delim);
+
+string GetFileNameFromPath(string s);
+
+void MyStrcpy(char* dest, char* source, int length);
