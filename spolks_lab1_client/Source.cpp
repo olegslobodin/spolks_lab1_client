@@ -2,12 +2,14 @@
 #include "Header.h"
 
 const int BUFFER_SIZE = 1000;
-const int FILE_BUFFER_SIZE = 10 * 1024 * 1024;
+const int FILE_BUFFER_SIZE = 10 * 1024;
 const char *END_OF_FILE = "File sent 8bb20328-3a19-4db8-b138-073a48f57f4a";
 const char *FILE_SEND_ERROR = "File send error 8bb20328-3a19-4db8-b138-073a48f57f4a";
 const char *FILE_NOT_FOUND = "File is not found 8bb20328-3a19-4db8-b138-073a48f57f4a";
 const char *DEFAULT_FILE_PATH_WINDOWS = "../debug/files/";
 const int MAX_FLAG_STRING_LENGTH = 60;
+const bool UDP = true;
+string defaultIp = "127.0.0.1";
 
 int main() {
 	int socket;
@@ -16,6 +18,7 @@ int main() {
 	ConfirmWinSocksDll();
 #endif
 
+	InitClientSocket(&socket);
 	Work(&socket);
 
 #if  defined _WIN32 || defined _WIN64
@@ -51,7 +54,10 @@ int ConfirmWinSocksDll()
 #endif
 
 void InitClientSocket(int *clientSocket) {
-	*clientSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	if (UDP)
+		*clientSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	else
+		*clientSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	if (*clientSocket == SOCKET_ERROR) {
 		PrintLastError();
 		return;
@@ -64,10 +70,10 @@ void Work(int *socket) {
 
 	while (true) {
 		getline(cin, cmd);
-		if (cmd.find("connect") == 0) {
+		if ((UDP && cmd.find("default") == 0) || (!UDP && cmd.find("connect") == 0)) {
 			vector<string> words = split(cmd, ' ');
 			if (words.size() > 1) {
-				if (Connect(socket, words[1]) == SOCKET_ERROR) {
+				if (ConnectOrSetIp(socket, words[1]) == SOCKET_ERROR) {
 					cout << "Connection failed\n";
 					PrintLastError();
 					continue;
@@ -107,20 +113,30 @@ void Work(int *socket) {
 	free(buffer);
 }
 
-int Connect(int *socket, string ip) {
-	InitClientSocket(socket);
-
-	sockaddr_in clientSocketParams;
-	clientSocketParams.sin_port = htons(10000);
-	clientSocketParams.sin_family = AF_INET;
+sockaddr_in GetSocketParamsByIp(string ip)
+{
+	sockaddr_in socketParams;
+	socketParams.sin_port = htons(10000);
+	socketParams.sin_family = AF_INET;
 
 #if defined _WIN32 || defined _WIN64
-	clientSocketParams.sin_addr.S_un.S_addr = inet_addr(ip.c_str());
+	socketParams.sin_addr.S_un.S_addr = inet_addr(ip.c_str());
 #elif defined __linux__
 	clientSocketParams.sin_addr.s_addr = inet_addr(ip.c_str());
 #endif
 
-	return connect(*socket, (struct sockaddr *) &clientSocketParams, sizeof(clientSocketParams));
+	return socketParams;
+}
+
+int ConnectOrSetIp(int *socket, string ip) {
+	if (UDP) {
+		defaultIp = ip;
+		return 0;
+	}
+	else {
+		sockaddr_in clientSocketParams = GetSocketParamsByIp(ip);
+		return connect(*socket, (struct sockaddr *) &clientSocketParams, sizeof(clientSocketParams));
+	}
 }
 
 void SendFile(int socket, string path)
@@ -165,8 +181,18 @@ void SendFile(int socket, string path)
 		file.read(fileBuffer, length);
 		cout << "\r" << file.tellg() << " bytes read";
 		pos = file.tellg();
+		int result = 0;
 		if (length > 0)
-			send(socket, fileBuffer, length, 0);
+			if (UDP) {
+				sockaddr* destAddr = (sockaddr*)&GetSocketParamsByIp(defaultIp);
+				result = sendto(socket, fileBuffer, length, 0, destAddr, sizeof sockaddr_in);
+			}
+			else
+				result = send(socket, fileBuffer, length, 0);
+		if (result == -1) {
+			PrintLastError();
+			break;
+		}
 	} while (length > 0);
 	file.close();
 
@@ -199,7 +225,14 @@ void ReceiveFile(int socket, string fileName, string savePath) {
 
 	while (!sendingComplete)
 	{
-		unsigned long long recievedBytesCount = recv(socket, tempFileBuffer, FILE_BUFFER_SIZE, 0);
+		unsigned long long recievedBytesCount = 0;
+		if (UDP) {
+			sockaddr clientAddr;
+			int fromLen = sizeof clientAddr;
+			recievedBytesCount = recvfrom(socket, tempFileBuffer, FILE_BUFFER_SIZE, 0, &clientAddr, &fromLen);
+		}
+		else
+			recievedBytesCount = recv(socket, tempFileBuffer, FILE_BUFFER_SIZE, 0);
 		MyStrcpy(currentPos, tempFileBuffer, recievedBytesCount);
 		currentPos += recievedBytesCount;
 		if (Contains(fileBuffer, FILE_BUFFER_SIZE, END_OF_FILE)) {
@@ -270,12 +303,18 @@ int SendString(string str, int socket) {
 	int bufSize = str.length();
 	char *buf = (char *)calloc(bufSize + 1, 1);
 	strcpy(buf, str.c_str());
-	if (send(socket, buf, bufSize, MSG_DONTROUTE) == -1) {
-		PrintLastError();
-		return -1;
+	int result = 0;
+	if (UDP) {
+		sockaddr* destAddr = (sockaddr*)&GetSocketParamsByIp(defaultIp);
+		result = sendto(socket, buf, bufSize, 0, destAddr, sizeof sockaddr_in);
 	}
+	else
+		result = send(socket, buf, bufSize, MSG_DONTROUTE);
+
+	if (result == -1)
+		PrintLastError();
 	free(buf);
-	return 0;
+	return result;
 }
 
 void PrintLastError() {
@@ -298,7 +337,14 @@ string ReceiveAnswer(int socket, char *buffer) {
 		if (currentPos == NULL)
 			currentPos = buffer;
 
-		int bytesRecieved = recv(socket, currentPos, BUFFER_SIZE - (currentPos - buffer), 0);
+		int bytesRecieved = 0;
+		if (UDP) {
+			sockaddr clientAddr;
+			int fromLen = sizeof clientAddr;
+			bytesRecieved = recvfrom(socket, currentPos, BUFFER_SIZE - (currentPos - buffer), 0, &clientAddr, &fromLen);
+		}
+		else
+			bytesRecieved = recv(socket, currentPos, BUFFER_SIZE - (currentPos - buffer), 0);
 		if (bytesRecieved == SOCKET_ERROR) {
 			buffer[0] = '\0';
 			PrintLastError();

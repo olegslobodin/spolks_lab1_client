@@ -42,7 +42,9 @@ void InitClientSocket(int *clientSocket);
 
 void Work(int *socket);
 
-int Connect(int *socket, string ip);
+sockaddr_in GetSocketParamsByIp(string ip);
+
+int ConnectOrSetIp(int *socket, string ip);
 
 void SendFile(int socket, string path);
 
