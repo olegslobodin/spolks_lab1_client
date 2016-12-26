@@ -2,7 +2,8 @@
 #include "Header.h"
 
 const int BUFFER_SIZE = 1000;
-const int FILE_BUFFER_SIZE = 10 * 1024;
+const int PACKAGE_NUMBER_SIZE = 11;
+const int FILE_BUFFER_SIZE = 6 * 1024 - PACKAGE_NUMBER_SIZE;
 const char *END_OF_FILE = "File sent 8bb20328-3a19-4db8-b138-073a48f57f4a";
 const char *FILE_SEND_ERROR = "File send error 8bb20328-3a19-4db8-b138-073a48f57f4a";
 const char *FILE_NOT_FOUND = "File is not found 8bb20328-3a19-4db8-b138-073a48f57f4a";
@@ -78,6 +79,8 @@ void Work(int *socket) {
 					PrintLastError();
 					continue;
 				}
+				if (cmd.find("default") == 0)
+					continue;
 			}
 		}
 		else if (cmd.find("send") == 0) {
@@ -167,11 +170,14 @@ void SendFile(int socket, string path)
 		return;
 	}
 
-	char *fileBuffer = (char*)calloc(FILE_BUFFER_SIZE, 1);
+	char *fileBuffer = (char*)calloc(FILE_BUFFER_SIZE + PACKAGE_NUMBER_SIZE, 1);
 	unsigned long long pos = 0, length = 0;
 	file.seekg(0, ios::end);
 	unsigned long long fileSize = file.tellg();
 	file.seekg(0, ios::beg);
+
+	unsigned long packageNumber = 0;
+	char packageNumberStr[PACKAGE_NUMBER_SIZE];
 
 	do {
 		if (fileSize - pos < FILE_BUFFER_SIZE)
@@ -182,13 +188,17 @@ void SendFile(int socket, string path)
 		cout << "\r" << file.tellg() << " bytes read";
 		pos = file.tellg();
 		int result = 0;
-		if (length > 0)
+		if (length > 0) {
+			sprintf_s(packageNumberStr, "%d", packageNumber++);
+			MyStrcpy(fileBuffer + length, packageNumberStr, PACKAGE_NUMBER_SIZE);
+			length += PACKAGE_NUMBER_SIZE;
 			if (UDP) {
 				sockaddr* destAddr = (sockaddr*)&GetSocketParamsByIp(defaultIp);
 				result = sendto(socket, fileBuffer, length, 0, destAddr, sizeof sockaddr_in);
 			}
 			else
 				result = send(socket, fileBuffer, length, 0);
+		}
 		if (result == -1) {
 			PrintLastError();
 			break;
