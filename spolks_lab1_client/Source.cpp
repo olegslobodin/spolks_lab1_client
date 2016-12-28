@@ -4,6 +4,10 @@
 const int BUFFER_SIZE = 1000;
 const int PACKAGE_NUMBER_SIZE = 11;
 const int FILE_BUFFER_SIZE = 6 * 1024 - PACKAGE_NUMBER_SIZE;
+const int TIMEOUT_MS = 10;
+unsigned long outPackageNumber = 0;
+char inPackageNumberStr[PACKAGE_NUMBER_SIZE];
+char outPackageNumberStr[PACKAGE_NUMBER_SIZE];
 const char *END_OF_FILE = "File sent 8bb20328-3a19-4db8-b138-073a48f57f4a";
 const char *FILE_SEND_ERROR = "File send error 8bb20328-3a19-4db8-b138-073a48f57f4a";
 const char *FILE_NOT_FOUND = "File is not found 8bb20328-3a19-4db8-b138-073a48f57f4a";
@@ -107,6 +111,8 @@ void Work(int *socket) {
 				cout << "Please specify a file name";
 			}
 		}
+		else if (cmd.length() == 0)
+			continue;
 		else if (SendString(cmd + "\n", *socket) == SOCKET_ERROR)
 			continue;
 		string answer = ReceiveAnswer(*socket, buffer);
@@ -176,9 +182,6 @@ void SendFile(int socket, string path)
 	unsigned long long fileSize = file.tellg();
 	file.seekg(0, ios::beg);
 
-	unsigned long packageNumber = 0;
-	char packageNumberStr[PACKAGE_NUMBER_SIZE];
-
 	do {
 		if (fileSize - pos < FILE_BUFFER_SIZE)
 			length = fileSize - pos;
@@ -189,12 +192,10 @@ void SendFile(int socket, string path)
 		pos = file.tellg();
 		int result = 0;
 		if (length > 0) {
-			sprintf_s(packageNumberStr, "%d", packageNumber++);
-			MyStrcpy(fileBuffer + length, packageNumberStr, PACKAGE_NUMBER_SIZE);
-			length += PACKAGE_NUMBER_SIZE;
 			if (UDP) {
+				length += PACKAGE_NUMBER_SIZE;
 				sockaddr* destAddr = (sockaddr*)&GetSocketParamsByIp(defaultIp);
-				result = sendto(socket, fileBuffer, length, 0, destAddr, sizeof sockaddr_in);
+				result = SendUDP(socket, fileBuffer, length, destAddr);
 			}
 			else
 				result = send(socket, fileBuffer, length, 0);
@@ -239,7 +240,7 @@ void ReceiveFile(int socket, string fileName, string savePath) {
 		if (UDP) {
 			sockaddr clientAddr;
 			int fromLen = sizeof clientAddr;
-			recievedBytesCount = recvfrom(socket, tempFileBuffer, FILE_BUFFER_SIZE, 0, &clientAddr, &fromLen);
+			recievedBytesCount = ReceiveUDP(socket, tempFileBuffer, FILE_BUFFER_SIZE, &clientAddr, &fromLen);
 		}
 		else
 			recievedBytesCount = recv(socket, tempFileBuffer, FILE_BUFFER_SIZE, 0);
@@ -310,13 +311,13 @@ int Pos(char *buffer, int bufferLength, const char *substring)
 }
 
 int SendString(string str, int socket) {
-	int bufSize = str.length();
-	char *buf = (char *)calloc(bufSize + 1, 1);
+	int bufSize = str.length() + PACKAGE_NUMBER_SIZE;
+	char *buf = (char *)calloc(bufSize, 1);
 	strcpy(buf, str.c_str());
 	int result = 0;
 	if (UDP) {
 		sockaddr* destAddr = (sockaddr*)&GetSocketParamsByIp(defaultIp);
-		result = sendto(socket, buf, bufSize, 0, destAddr, sizeof sockaddr_in);
+		result = SendUDP(socket, buf, bufSize, destAddr);
 	}
 	else
 		result = send(socket, buf, bufSize, MSG_DONTROUTE);
@@ -351,7 +352,7 @@ string ReceiveAnswer(int socket, char *buffer) {
 		if (UDP) {
 			sockaddr clientAddr;
 			int fromLen = sizeof clientAddr;
-			bytesRecieved = recvfrom(socket, currentPos, BUFFER_SIZE - (currentPos - buffer), 0, &clientAddr, &fromLen);
+			bytesRecieved = ReceiveUDP(socket, currentPos, BUFFER_SIZE - (currentPos - buffer), &clientAddr, &fromLen);
 		}
 		else
 			bytesRecieved = recv(socket, currentPos, BUFFER_SIZE - (currentPos - buffer), 0);
@@ -398,4 +399,69 @@ string GetFileNameFromPath(string path) {
 void MyStrcpy(char* dest, char* source, int length) {
 	for (int i = 0; i < length; i++)
 		dest[i] = source[i];
+}
+
+bool AreEqual(char* first, char* second, int length) {
+	for (int i = 0; i < length && (first[i] != 0 || second[i] != 0); i++)
+		if (first[i] != second[i])
+			return false;
+	return true;
+}
+
+int MySelect(int socket) {
+	fd_set fds;
+	int n;
+	struct timeval tv;
+
+	// Set up the file descriptor set.
+	FD_ZERO(&fds);
+	FD_SET(socket, &fds);
+
+	// Set up the struct timeval for the timeout.
+	tv.tv_sec = TIMEOUT_MS / 1000;
+	tv.tv_usec = (TIMEOUT_MS % 1000) * 1000;
+
+	// Wait until timeout or data received.
+	return select(socket, &fds, NULL, NULL, &tv);
+}
+
+//buffer must have free PACKAGE_NUMBER_SIZE bytes at the end to insert package number
+int SendUDP(SOCKET s, char* buf, int len, sockaddr* to) {
+	_ultoa(outPackageNumber, buf + len - PACKAGE_NUMBER_SIZE, 10);
+	int fromLen = sizeof *to;
+	while (true) {
+		if (sendto(s, buf, len, 0, to, sizeof sockaddr_in) == -1)
+			return -1;
+		switch (MySelect(s))
+		{
+		case -1:
+			return -1;
+		case 0:
+			continue;
+		default:
+			break;
+		}
+		while (recvfrom(s, outPackageNumberStr, PACKAGE_NUMBER_SIZE, 0, to, &fromLen) == -1);
+		if (AreEqual(outPackageNumberStr, buf + len - PACKAGE_NUMBER_SIZE, PACKAGE_NUMBER_SIZE))
+			break;
+	}
+	outPackageNumber++;
+	return 0;
+}
+
+int ReceiveUDP(SOCKET s, char* buf, int len, sockaddr* from, int* fromlen) {
+	int receivedBytesCount = 0;
+	bool accepted = false;
+	while (!accepted) {
+		receivedBytesCount = recvfrom(s, buf, len, 0, from, fromlen);
+		if (receivedBytesCount == -1)
+			return -1;
+		receivedBytesCount -= PACKAGE_NUMBER_SIZE;
+		if (sendto(s, buf + receivedBytesCount, PACKAGE_NUMBER_SIZE, 0, from, *fromlen) == -1)
+			return -1;
+		if (!AreEqual(inPackageNumberStr, buf + receivedBytesCount, PACKAGE_NUMBER_SIZE))
+			accepted = true;
+		MyStrcpy(inPackageNumberStr, buf + receivedBytesCount, PACKAGE_NUMBER_SIZE);
+	}
+	return receivedBytesCount;
 }
