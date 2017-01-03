@@ -17,8 +17,8 @@ const char *DEFAULT_FILE_PATH = "../debug/files/";
 const char *DEFAULT_FILE_PATH = "/home/oleg/.CLion2016.2/system/cmake/generated/spolks_lab1_client-8ddd55ae/8ddd55ae/Debug/files/";
 #endif
 const int MAX_FLAG_STRING_LENGTH = 60;
-const bool UDP = false;
-string defaultIp = "127.0.0.1";
+const bool UDP = true;
+string defaultIp = "192.168.43.139";
 
 int main() {
     int socket;
@@ -141,7 +141,7 @@ int ConnectOrSetIp(int *socket, string ip) {
         return 0;
     } else {
         sockaddr_in clientSocketParams = GetSocketParamsByIp(ip);
-        return connect(*socket, (struct sockaddr *) &clientSocketParams, sizeof(clientSocketParams));
+        return connect(*socket, (sockaddr *) &clientSocketParams, sizeof(clientSocketParams));
     }
 }
 
@@ -190,8 +190,7 @@ void SendFile(int socket, string path) {
             if (UDP) {
                 length += PACKAGE_NUMBER_SIZE;
                 sockaddr_in params = GetSocketParamsByIp(defaultIp);
-                sockaddr *destAddr = (sockaddr *) &params;
-                result = SendUDP(socket, fileBuffer, length, destAddr);
+                result = SendUDP(socket, fileBuffer, length, &params);
             } else
                 result = send(socket, fileBuffer, length, 0);
         }
@@ -231,7 +230,7 @@ void ReceiveFile(int socket, string fileName, string savePath) {
     while (!sendingComplete) {
         unsigned long long recievedBytesCount = 0;
         if (UDP) {
-            sockaddr clientAddr;
+            sockaddr_in clientAddr;
             socklen_t fromLen = sizeof clientAddr;
             memset(&clientAddr, 0, fromLen);
             recievedBytesCount = ReceiveUDP(socket, tempFileBuffer, FILE_BUFFER_SIZE, &clientAddr, &fromLen);
@@ -305,8 +304,7 @@ int SendString(string str, int socket) {
     int result = 0;
     if (UDP) {
         sockaddr_in params = GetSocketParamsByIp(defaultIp);
-        sockaddr *destAddr = (sockaddr *) &params;
-        result = SendUDP(socket, buf, bufSize, destAddr);
+        result = SendUDP(socket, buf, bufSize, &params);
     } else
         result = send(socket, buf, bufSize, MSG_DONTROUTE);
 
@@ -338,7 +336,7 @@ string ReceiveAnswer(int socket, char *buffer) {
 
         int bytesRecieved = 0;
         if (UDP) {
-            sockaddr clientAddr;
+            sockaddr_in clientAddr;
             socklen_t fromLen = sizeof clientAddr;
             memset(&clientAddr, 0, fromLen);
             bytesRecieved = ReceiveUDP(socket, currentPos, BUFFER_SIZE - (currentPos - buffer), &clientAddr, &fromLen);
@@ -398,7 +396,6 @@ bool AreEqual(char *first, char *second, int length) {
 
 int MySelect(int socket) {
     fd_set fds;
-    int n;
     struct timeval tv;
 
     // Set up the file descriptor set.
@@ -410,11 +407,11 @@ int MySelect(int socket) {
     tv.tv_usec = (TIMEOUT_MS % 1000) * 1000;
 
     // Wait until timeout or data received.
-    return select(socket, &fds, NULL, NULL, &tv);
+    return select(socket + 1, &fds, NULL, NULL, &tv);
 }
 
 //buffer must have free PACKAGE_NUMBER_SIZE bytes at the end to insert package number
-int SendUDP(int s, char *buf, int len, sockaddr *to) {
+int SendUDP(int s, char *buf, int len, sockaddr_in *to) {
 #if  defined _WIN32 || defined _WIN64
     _ultoa(outPackageNumber, buf + len - PACKAGE_NUMBER_SIZE, 10);
 #elif defined __linux__
@@ -422,7 +419,7 @@ int SendUDP(int s, char *buf, int len, sockaddr *to) {
 #endif
     socklen_t fromLen = sizeof *to;
     while (true) {
-        if (sendto(s, buf, len, 0, to, fromLen) == -1)
+        if (sendto(s, buf, len, 0, (sockaddr*) to, fromLen) == -1)
             return -1;
         switch (MySelect(s)) {
             case -1:
@@ -432,7 +429,7 @@ int SendUDP(int s, char *buf, int len, sockaddr *to) {
             default:
                 break;
         }
-        while (recvfrom(s, outPackageNumberStr, PACKAGE_NUMBER_SIZE, 0, to, &fromLen) == -1);
+        while (recvfrom(s, outPackageNumberStr, PACKAGE_NUMBER_SIZE, 0, (sockaddr*) to, &fromLen) == -1);
         if (AreEqual(outPackageNumberStr, buf + len - PACKAGE_NUMBER_SIZE, PACKAGE_NUMBER_SIZE))
             break;
     }
@@ -440,15 +437,15 @@ int SendUDP(int s, char *buf, int len, sockaddr *to) {
     return 0;
 }
 
-int ReceiveUDP(int s, char *buf, int len, sockaddr *from, socklen_t* fromlen) {
+int ReceiveUDP(int s, char *buf, int len, sockaddr_in *from, socklen_t* fromlen) {
     int receivedBytesCount = 0;
     bool accepted = false;
     while (!accepted) {
-        receivedBytesCount = recvfrom(s, buf, len, 0, from, fromlen);
+        receivedBytesCount = recvfrom(s, buf, len, 0, (sockaddr*) from, fromlen);
         if (receivedBytesCount == -1)
             return -1;
         receivedBytesCount -= PACKAGE_NUMBER_SIZE;
-        if (sendto(s, buf + receivedBytesCount, PACKAGE_NUMBER_SIZE, 0, from, *fromlen) == -1)
+        if (sendto(s, buf + receivedBytesCount, PACKAGE_NUMBER_SIZE, 0, (sockaddr*) from, *fromlen) == -1)
             return -1;
         if (!AreEqual(inPackageNumberStr, buf + receivedBytesCount, PACKAGE_NUMBER_SIZE))
             accepted = true;
